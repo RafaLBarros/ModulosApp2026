@@ -47,10 +47,12 @@ st.set_page_config(page_title="Extrator ERP - DP", page_icon="📊", layout="cen
 st.title("Processador de Importação - ERP 📊")
 st.markdown("Faça o upload dos relatórios em PDF do Departamento Pessoal para gerar a planilha consolidada.")
 
-# Seleção do Projeto
+# Seleção do Projeto (Agora começa vazia e obrigatória)
 projeto_selecionado = st.selectbox(
     "Selecione o Projeto / Plano de Contas:",
-    list(MAPA_CONTAS.keys())
+    list(MAPA_CONTAS.keys()),
+    index=None,  # <-- Força a caixa a iniciar sem nenhuma seleção
+    placeholder="--- Clique aqui para selecionar um projeto ---"
 )
 
 tipo_extracao = st.radio(
