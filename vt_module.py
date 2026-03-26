@@ -3,7 +3,7 @@ import pandas as pd
 import re
 import os
 
-def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None):
+def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_contabil='5.1.4. Vale Transporte'):
     if isinstance(lista_caminhos_pdf, str):
         lista_caminhos_pdf = [lista_caminhos_pdf]
         
@@ -104,7 +104,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None):
         if dados_pdf_atual:
             for i, linha in enumerate(dados_pdf_atual):
                 linha['ITENS DO DIÁRIO / QUANTIDADE'] = 1
-                linha['ITENS DO DIÁRIO / CONTA'] = '5.1.4. Vale Transporte'
+                linha['ITENS DO DIÁRIO / CONTA'] = conta_contabil
                 linha['PARCEIRO'] = fornecedor if i == 0 else ""
                 
             todos_dados_consolidados.extend(dados_pdf_atual)
