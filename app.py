@@ -71,53 +71,59 @@ arquivos_upados = st.file_uploader(
 )
 
 if st.button("Processar Arquivos"):
+    
+    # 1. VALIDAÇÃO DO PROJETO (Freio de mão 1)
+    if projeto_selecionado is None:
+        st.error("🚨 Selecione o Projeto!")
+        st.stop() # Pára a execução do app aqui mesmo
+        
+    # 2. VALIDAÇÃO DOS ARQUIVOS (Freio de mão 2)
     if not arquivos_upados:
         st.warning("Por favor, faça o upload de pelo menos um arquivo PDF.")
-    else:
-        with st.spinner("Lendo PDFs e mapeando plano de contas..."):
+        st.stop() # Pára a execução do app aqui mesmo
+
+    # Se passou pelos freios acima, pode processar com segurança!
+    with st.spinner("Lendo PDFs e mapeando plano de contas..."):
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            caminhos_pdfs = []
             
-            with tempfile.TemporaryDirectory() as temp_dir:
-                caminhos_pdfs = []
-                
-                for arquivo in arquivos_upados:
-                    caminho_temp = os.path.join(temp_dir, arquivo.name)
-                    with open(caminho_temp, "wb") as f:
-                        f.write(arquivo.getbuffer())
-                    caminhos_pdfs.append(caminho_temp)
-                
-                caminho_excel = os.path.join(temp_dir, "importacao_erp_consolidada.xlsx")
-                
-                try:
-                    # ROTEAMENTO COM INJEÇÃO DA CONTA CONTÁBIL
-                    if "Refeição" in tipo_extracao:
-                        # Busca no dicionário a conta de VR do projeto selecionado
-                        conta_vr = MAPA_CONTAS[projeto_selecionado]["VR"]
-                        extrair_vr_completo(caminhos_pdfs, caminho_saida_excel=caminho_excel, conta_contabil=conta_vr)
-                        
-                    elif "Transporte" in tipo_extracao:
-                        # Busca no dicionário a conta de VT do projeto selecionado
-                        conta_vt = MAPA_CONTAS[projeto_selecionado]["VT"]
-                        extrair_vt_completo(caminhos_pdfs, caminho_saida_excel=caminho_excel, conta_contabil=conta_vt)
-                        
-                    elif "Folha" in tipo_extracao:
-                        # Folha não precisa de conta mapeada, então passamos normalmente
-                        extrair_folha_completo(caminhos_pdfs, caminho_saida_excel=caminho_excel)
+            for arquivo in arquivos_upados:
+                caminho_temp = os.path.join(temp_dir, arquivo.name)
+                with open(caminho_temp, "wb") as f:
+                    f.write(arquivo.getbuffer())
+                caminhos_pdfs.append(caminho_temp)
+            
+            caminho_excel = os.path.join(temp_dir, "importacao_erp_consolidada.xlsx")
+            
+            try:
+                # ROTEAMENTO
+                if "Refeição" in tipo_extracao:
+                    conta_vr = MAPA_CONTAS[projeto_selecionado]["VR"]
+                    extrair_vr_completo(caminhos_pdfs, caminho_saida_excel=caminho_excel, conta_contabil=conta_vr)
                     
+                elif "Transporte" in tipo_extracao:
+                    conta_vt = MAPA_CONTAS[projeto_selecionado]["VT"]
+                    extrair_vt_completo(caminhos_pdfs, caminho_saida_excel=caminho_excel, conta_contabil=conta_vt)
                     
-                    if os.path.exists(caminho_excel):
-                        with open(caminho_excel, "rb") as f:
-                            bytes_excel = f.read()
-                        
-                        st.success(f"✅ Relatórios processados com sucesso para o projeto: **{projeto_selecionado}**!")
-                        
-                        st.download_button(
-                            label="📥 Baixar Planilha para o ERP (.xlsx)",
-                            data=bytes_excel,
-                            file_name=f"importacao_{projeto_selecionado.replace(' ', '_')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.error("Erro: A planilha não foi gerada. Verifique se você enviou os PDFs corretos.")
+                elif "Folha" in tipo_extracao:
+                    extrair_folha_completo(caminhos_pdfs, caminho_saida_excel=caminho_excel)
                 
-                except Exception as e:
-                    st.error(f"Ocorreu um erro inesperado durante o processamento: {e}")
+                # VERIFICAÇÃO DO RESULTADO
+                if os.path.exists(caminho_excel):
+                    with open(caminho_excel, "rb") as f:
+                        bytes_excel = f.read()
+                    
+                    st.success(f"✅ Relatórios processados com sucesso para o projeto: **{projeto_selecionado}**!")
+                    
+                    st.download_button(
+                        label="📥 Baixar Planilha para o ERP (.xlsx)",
+                        data=bytes_excel,
+                        file_name=f"importacao_{projeto_selecionado.replace(' ', '_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.error("Erro: A planilha não foi gerada. Verifique se os relatórios enviados batem com a opção selecionada.")
+            
+            except Exception as e:
+                st.error(f"Ocorreu um erro inesperado durante a extração: {e}")
