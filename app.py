@@ -38,6 +38,10 @@ MAPA_CONTAS = {
     "FAVELA COM DIGNIDADE": {
         "VR": "5.1.11. Alimentação",
         "VT": "5.1.10. Vale Transporte"
+    },
+    "SEDEN": {
+        "VR": "5.1.20. Vale Refeição",
+        "VT": "5.1.19. Vale Transporte"
     }
 }
 # ==========================================
