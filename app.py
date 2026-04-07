@@ -27,11 +27,7 @@ MAPA_CONTAS = {
         "VR": "5.1.24. Vale Refeição",
         "VT": "5.1.23. Vale Transporte"
     },
-    "ESPORTE ATIVO 1": {
-        "VR": "5.1.24. Vale Refeição",
-        "VT": "5.1.23. Vale Transporte"
-    },
-    "ESPORTE ATIVO 2": {
+    "ESPORTE ATIVO 1 E 2": {
         "VR": "5.1.24. Vale Refeição",
         "VT": "5.1.23. Vale Transporte"
     },
