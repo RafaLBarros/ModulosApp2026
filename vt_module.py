@@ -14,7 +14,6 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
         diretorio = os.path.dirname(lista_caminhos_pdf[0])
         caminho_saida_excel = os.path.join(diretorio, base + "_consolidado.xlsx")
 
-    # Tratamento para não sobrescrever arquivo existente
     if os.path.exists(caminho_saida_excel):
         base_no_ext = os.path.splitext(caminho_saida_excel)[0]
         contador = 1
@@ -51,10 +50,17 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
         
         with pdfplumber.open(caminho_pdf) as pdf:
             texto_pag1 = pdf.pages[0].extract_text().lower()
+            subtipo_pluxee = None
             
             if "relatório resumido do pedido" in texto_pag1:
                 tipo_layout = "pluxee"
-                fornecedor = "Sodexo"
+                fornecedor = "PLUXEE - VALE TRANSPORTE"
+                # VERIFICA QUAL É O MODELO DO PLUXEE
+                if "repasse" in texto_pag1:
+                    subtipo_pluxee = "com_repasse"
+                else:
+                    subtipo_pluxee = "sem_repasse"
+                    
             elif "pedido loja" in texto_pag1 or "jae" in texto_pag1 or "cbd bilhete" in texto_pag1:
                 tipo_layout = "jae"
                 fornecedor = "CBD BILHETE DIGITAL S/A"
@@ -69,81 +75,197 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
             # MOTOR EXCLUSIVO PLUXEE
             # ==========================================
             if tipo_layout == "pluxee":
-                nome_atual = ""
-                valor_atual = ""
-                achou_cpf = False
                 
-                for page in pdf.pages:
-                    texto = page.extract_text()
-                    if not texto: continue
+                # ---------------------------------------------------------
+                # CÓDIGO A: PLUXEE COM REPASSE (Lógica original testada e aprovada)
+                # ---------------------------------------------------------
+                if subtipo_pluxee == "com_repasse":
+                    nome_atual = ""
+                    valor_atual = ""
+                    achou_cpf = False
+                    total_atualizado = False 
                     
-                    linhas = texto.split('\n')
-                    for linha in linhas:
-                        linha = linha.strip()
-                        if not linha: continue
+                    for page in pdf.pages:
+                        texto = page.extract_text()
+                        if not texto: continue
                         
-                        match_cpf = re.search(r'(\d{11})([A-ZÀ-Ÿ\s]+?)(?=\s+(?:CIAP|Riocard|Semove|Card|Bilhete|Único|Tarifa|Variável|Verificar|\[|$))', linha)
-                        
-                        if match_cpf:
-                            # Salva o funcionário anterior se o total não foi encontrado (fallback)
-                            if achou_cpf and nome_atual and valor_atual:
-                                dados_pdf_atual.append({
-                                    'ITENS DO DIÁRIO / PRODUTO': nome_atual.strip(), 
-                                    'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
-                                })
+                        linhas = texto.split('\n')
+                        for linha in linhas:
+                            linha = linha.strip()
+                            if not linha: continue
                             
-                            cpf = match_cpf.group(1)
-                            nome_atual = match_cpf.group(2).strip()
-                            
-                            # Extrai os valores iniciais (ex: 224,00) como segurança
-                            valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
-                            if valores:
-                                valores_floats = [converter_para_float(v) for v in valores]
-                                valor_vt = max(valores_floats) 
-                                valor_atual = f"{valor_vt:.2f}".replace('.', ',')
-                            else:
-                                valor_atual = "0,00"
-                                
-                            achou_cpf = True
-                            
-                        elif achou_cpf:
-                            # ========================================================
-                            # TRAVA DE SEGURANÇA: ENCONTROU O TOTAL DO FUNCIONÁRIO
-                            # ========================================================
-                            if re.match(r'^\d+[.,]\d{2}$', linha):
-                                valor_atual = linha.strip()
-                                
-                                # Salva imediatamente o funcionário finalizado
-                                dados_pdf_atual.append({
-                                    'ITENS DO DIÁRIO / PRODUTO': nome_atual.strip(), 
-                                    'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
-                                })
-                                
-                                # Fecha o bloco! Isso impede que o "Total Geral" sobrescreva a Yasmin
-                                achou_cpf = False 
-                                nome_atual = ""
-                                valor_atual = ""
+                            if "total do pedido" in linha.lower() or "total geral" in linha.lower() or "total (r$)" in linha.lower() or "total:" in linha.lower():
+                                if achou_cpf and nome_atual and valor_atual:
+                                    dados_pdf_atual.append({
+                                        'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
+                                        'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                                    })
+                                    achou_cpf = False
+                                    nome_atual = ""
+                                    valor_atual = ""
                                 continue
-                            
-                            # Continua reunindo as partes do nome cortado
-                            pedacos_nome = []
-                            for palavra in linha.split():
-                                palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
-                                if palavra_limpa.isupper() or palavra_limpa.upper() in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
-                                    pedacos_nome.append(palavra_limpa)
-                                else:
-                                    break
-                            
-                            if pedacos_nome:
-                                nome_atual += " " + " ".join(pedacos_nome)
 
-                # Salva o último funcionário caso o PDF acabe abruptamente sem a linha de total
-                if achou_cpf and nome_atual and valor_atual:
-                    dados_pdf_atual.append({
-                        'ITENS DO DIÁRIO / PRODUTO': nome_atual.strip(), 
-                        'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
-                    })
+                            match_cpf = re.search(r'(\d{11})([A-ZÀ-Ÿ\s]+?)(?=\s+(?:CIAP|Riocard|Semove|Card|Bilhete|Único|Tarifa|Variável|Verificar|\[|$))', linha)
+                            
+                            if match_cpf:
+                                if achou_cpf and nome_atual and valor_atual:
+                                    dados_pdf_atual.append({
+                                        'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
+                                        'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                                    })
+                                
+                                cpf = match_cpf.group(1)
+                                nome_atual = match_cpf.group(2).strip()
+                                total_atualizado = False 
+                                
+                                valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
+                                if valores:
+                                    valores_floats = [converter_para_float(v) for v in valores]
+                                    valor_vt = max(valores_floats) 
+                                    valor_atual = f"{valor_vt:.2f}".replace('.', ',')
+                                else:
+                                    valor_atual = "0,00"
+                                    
+                                achou_cpf = True
+                                
+                            elif achou_cpf:
+                                if re.match(r'^\d+[.,]\d{2}$', linha):
+                                    if not total_atualizado: 
+                                        valor_atual = linha.strip()
+                                        total_atualizado = True 
+                                    continue
+                                
+                                pedacos_nome = []
+                                for palavra in linha.split():
+                                    palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
+                                    if palavra_limpa.isupper() or palavra_limpa.upper() in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
+                                        pedacos_nome.append(palavra_limpa)
+                                    else:
+                                        break
+                                
+                                if pedacos_nome:
+                                    nome_atual += " " + " ".join(pedacos_nome)
+
+                    if achou_cpf and nome_atual and valor_atual:
+                        dados_pdf_atual.append({
+                            'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
+                            'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                        })
+                
+                # ---------------------------------------------------------
+                # CÓDIGO B: PLUXEE SEM REPASSE (Novo Layout)
+                # ---------------------------------------------------------
+                else:
+                    nome_atual = ""
+                    valor_atual = ""
+                    achou_cpf = False
                     
+                    # Identifica o nome do departamento no cabeçalho para ignorar mais tarde
+                    depto_remover = ""
+                    match_depto = re.search(r'departamento\s*[:\-]?\s*([^\n]+)', texto_pag1)
+                    if match_depto:
+                        depto_raw = match_depto.group(1).upper()
+                        depto_remover = re.sub(r'\[.*?\].*', '', depto_raw).strip()
+
+                    for page in pdf.pages:
+                        texto = page.extract_text()
+                        if not texto: continue
+                        
+                        linhas = texto.split('\n')
+                        for linha in linhas:
+                            linha = linha.strip()
+                            if not linha: continue
+
+                            if "total do pedido" in linha.lower() or "total geral" in linha.lower() or "total:" in linha.lower():
+                                if achou_cpf and nome_atual and valor_atual:
+                                    dados_pdf_atual.append({
+                                        'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
+                                        'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                                    })
+                                    achou_cpf = False
+                                    nome_atual = ""
+                                    valor_atual = ""
+                                continue
+                                
+                            # Filtro de sugeiras específicas desse layout
+                            linha_limpa_nome = linha
+                            termos_lixo = [
+                                r'\[.*?\]', r'\(.*?\)', 
+                                r'(?i)jaé\s*-\s*cartão\s*municipal\s*rio\s*de\s*janeiro',
+                                r'(?i)cartão\s*municipal\s*rio\s*de\s*janeiro',
+                                r'(?i)jaé', r'(?i)rio\s*de\s*janeiro', r'(?i)de\s*janeiro'
+                            ]
+                            if depto_remover:
+                                termos_lixo.append(rf'(?i)\b{re.escape(depto_remover)}\b')
+                                
+                            for termo in termos_lixo:
+                                linha_limpa_nome = re.sub(termo, ' ', linha_limpa_nome)
+
+                            match_cpf = re.search(r'(\d{11})', linha)
+                            
+                            # Inicia a captura de um novo funcionário
+                            if match_cpf:
+                                if achou_cpf and nome_atual and valor_atual:
+                                    dados_pdf_atual.append({
+                                        'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
+                                        'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                                    })
+                                
+                                cpf = match_cpf.group(1)
+                                
+                                # Extrai o nome após o CPF já limpo de "departamento" e "Jaé"
+                                parte_apos_cpf = linha_limpa_nome[linha_limpa_nome.find(cpf) + 11:]
+                                pedacos_nome = []
+                                
+                                for palavra in parte_apos_cpf.split():
+                                    palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
+                                    # Usa correspondência exata para conectivos, ignorando "de" em minúsculo
+                                    if palavra_limpa.isupper() or palavra_limpa in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
+                                        pedacos_nome.append(palavra_limpa)
+                                    elif palavra_limpa:
+                                        break
+                                        
+                                nome_atual = " ".join(pedacos_nome)
+                                
+                                # Pega o maior valor financeiro daquela linha (Ex: 200,00)
+                                valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
+                                if valores:
+                                    valores_floats = [converter_para_float(v) for v in valores]
+                                    valor_vt = max(valores_floats)
+                                    valor_atual = f"{valor_vt:.2f}".replace('.', ',')
+                                else:
+                                    valor_atual = "0,00"
+                                    
+                                achou_cpf = True
+                                
+                            # Continua capturando o funcionário nas linhas de baixo
+                            elif achou_cpf:
+                                # Verifica se os valores caíram para a linha de baixo e atualiza
+                                valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
+                                if valores:
+                                    valores_floats = [converter_para_float(v) for v in valores]
+                                    max_linha = max(valores_floats)
+                                    atual_float = converter_para_float(valor_atual)
+                                    if max_linha > atual_float:
+                                        valor_atual = f"{max_linha:.2f}".replace('.', ',')
+
+                                pedacos_nome = []
+                                for palavra in linha_limpa_nome.split():
+                                    palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
+                                    if palavra_limpa.isupper() or palavra_limpa in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
+                                        pedacos_nome.append(palavra_limpa)
+                                    elif palavra_limpa:
+                                        break
+                                
+                                if pedacos_nome:
+                                    nome_atual += " " + " ".join(pedacos_nome)
+
+                    if achou_cpf and nome_atual and valor_atual:
+                        dados_pdf_atual.append({
+                            'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
+                            'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                        })
+
             # ==========================================
             # MOTORES ORIGINAIS (MAIS.MOBI / JAE)
             # ==========================================
@@ -190,7 +312,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     if nome and valor_str:
                                         dados_pdf_atual.append({'ITENS DO DIÁRIO / PRODUTO': nome, 'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_str})
 
-        # Adiciona a Tarifa (Mais.Mobi) se existir
+        # Adiciona a Tarifa
         if valor_tarifa and valor_tarifa not in ['0,00', '0.00']:
             dados_pdf_atual.append({
                 'ITENS DO DIÁRIO / PRODUTO': 'TARIFA DE ENTREGA',
