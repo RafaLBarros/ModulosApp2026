@@ -38,7 +38,11 @@ MAPA_CONTAS = {
     "SEDEN": {
         "VR": "5.1.20. Vale Refeição",
         "VT": "5.1.19. Vale Transporte"
-    }
+    },
+    "BORA PRA ESCOLA": {
+        "VR": "5.2.6. Vale Refeição",
+        "VT": "5.2.5. Vale Transporte"
+    },
 }
 # ==========================================
 
