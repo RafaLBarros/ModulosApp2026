@@ -2,7 +2,46 @@ import pdfplumber
 import pandas as pd
 import re
 import os
+from collections import Counter
 
+# ==========================================
+# FUNÇÃO DETETIVE (DINÂMICA)
+# ==========================================
+def descobrir_departamentos(pdf):
+    deptos_frequencia = Counter()
+    deptos_seguros = set()
+    
+    for page in pdf.pages:
+        # 1. Busca pelo cabeçalho (100% seguro se for 1 depto por folha)
+        texto_normal = page.extract_text()
+        if texto_normal:
+            for match in re.finditer(r'departamento\s*[:\-]?\s*([a-zà-ÿ\s]+?)\s*\[\w{3,}\]', texto_normal, re.IGNORECASE):
+                depto = match.group(1).strip().upper()
+                if len(depto) > 3 and depto != "TODOS":
+                    deptos_seguros.add(depto)
+        
+        # 2. Busca pela estrutura da tabela usando layout=True (Mapeia o abismo visual entre as colunas)
+        texto_layout = page.extract_text(layout=True)
+        if texto_layout:
+            for match in re.finditer(r'([A-ZÀ-Ÿ\s]+?)\[\w{3,}\]', texto_layout):
+                trecho = match.group(1)
+                partes = re.split(r'\s{2,}', trecho)
+                depto = partes[-1].strip()
+                if 3 < len(depto) < 40:
+                    deptos_frequencia[depto] += 1
+                    
+    # Adiciona os departamentos que apareceram mais de 1 vez
+    for depto, freq in deptos_frequencia.items():
+        if freq > 1:
+            deptos_seguros.add(depto)
+            
+    # Retorna do maior pro menor
+    return sorted(list(deptos_seguros), key=len, reverse=True)
+
+
+# ==========================================
+# EXTRATOR PRINCIPAL
+# ==========================================
 def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_contabil='5.1.4. Vale Transporte'):
     if isinstance(lista_caminhos_pdf, str):
         lista_caminhos_pdf = [lista_caminhos_pdf]
@@ -14,6 +53,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
         diretorio = os.path.dirname(lista_caminhos_pdf[0])
         caminho_saida_excel = os.path.join(diretorio, base + "_consolidado.xlsx")
 
+    # Tratamento para não sobrescrever arquivo existente
     if os.path.exists(caminho_saida_excel):
         base_no_ext = os.path.splitext(caminho_saida_excel)[0]
         contador = 1
@@ -54,8 +94,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
             
             if "relatório resumido do pedido" in texto_pag1:
                 tipo_layout = "pluxee"
-                fornecedor = "PLUXEE - VALE TRANSPORTE"
-                # VERIFICA QUAL É O MODELO DO PLUXEE
+                fornecedor = "Sodexo"
                 if "repasse" in texto_pag1:
                     subtipo_pluxee = "com_repasse"
                 else:
@@ -76,8 +115,21 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
             # ==========================================
             if tipo_layout == "pluxee":
                 
+                # Chama o detetive e disponibiliza para ambos os códigos (Com e Sem repasse)
+                deptos_remover = descobrir_departamentos(pdf)
+                
+                # Lista unificada de sugeiras de sistema de ambas as lógicas
+                lixos_sistema = [
+                    r'\[.*?\]', r'\(.*?\)', 
+                    r'(?i)jaé\s*-\s*cartão\s*municipal\s*rio\s*de\s*janeiro',
+                    r'(?i)cartão\s*municipal\s*rio\s*de\s*janeiro',
+                    r'(?i)jaé', r'(?i)rio\s*de\s*janeiro', r'(?i)de\s*janeiro',
+                    r'(?i)novo\s*cartão', r'(?i)cartão\s*a\s*verificar', r'(?i)cartão',
+                    r'(?i)riocard', r'(?i)semove', r'(?i)bilhete', r'(?i)único', r'(?i)tarifa', r'(?i)variável'
+                ]
+                
                 # ---------------------------------------------------------
-                # CÓDIGO A: PLUXEE COM REPASSE (Lógica original testada e aprovada)
+                # CÓDIGO A: PLUXEE COM REPASSE
                 # ---------------------------------------------------------
                 if subtipo_pluxee == "com_repasse":
                     nome_atual = ""
@@ -105,7 +157,16 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     valor_atual = ""
                                 continue
 
-                            match_cpf = re.search(r'(\d{11})([A-ZÀ-Ÿ\s]+?)(?=\s+(?:CIAP|Riocard|Semove|Card|Bilhete|Único|Tarifa|Variável|Verificar|\[|$))', linha)
+                            # Aplica a Máquina de Limpeza também no Código A!
+                            linha_limpa_nome = linha
+                            termos_lixo_atual = lixos_sistema.copy()
+                            for depto in deptos_remover:
+                                termos_lixo_atual.append(rf'(?i){re.escape(depto)}')
+                                
+                            for termo in termos_lixo_atual:
+                                linha_limpa_nome = re.sub(termo, ' ', linha_limpa_nome)
+
+                            match_cpf = re.search(r'(?<!\d)(\d{11})(?!\d)', linha)
                             
                             if match_cpf:
                                 if achou_cpf and nome_atual and valor_atual:
@@ -115,7 +176,20 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     })
                                 
                                 cpf = match_cpf.group(1)
-                                nome_atual = match_cpf.group(2).strip()
+                                
+                                idx_cpf = linha_limpa_nome.find(cpf)
+                                if idx_cpf != -1:
+                                    parte_apos_cpf = linha_limpa_nome[idx_cpf + 11:]
+                                else:
+                                    parte_apos_cpf = linha_limpa_nome
+
+                                pedacos_nome = []
+                                for palavra in parte_apos_cpf.split():
+                                    palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
+                                    if palavra_limpa.isupper():
+                                        pedacos_nome.append(palavra_limpa)
+                                
+                                nome_atual = " ".join(pedacos_nome)
                                 total_atualizado = False 
                                 
                                 valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
@@ -136,12 +210,10 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     continue
                                 
                                 pedacos_nome = []
-                                for palavra in linha.split():
+                                for palavra in linha_limpa_nome.split():
                                     palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
-                                    if palavra_limpa.isupper() or palavra_limpa.upper() in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
+                                    if palavra_limpa.isupper():
                                         pedacos_nome.append(palavra_limpa)
-                                    else:
-                                        break
                                 
                                 if pedacos_nome:
                                     nome_atual += " " + " ".join(pedacos_nome)
@@ -153,19 +225,12 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                         })
                 
                 # ---------------------------------------------------------
-                # CÓDIGO B: PLUXEE SEM REPASSE (Novo Layout)
+                # CÓDIGO B: PLUXEE SEM REPASSE
                 # ---------------------------------------------------------
                 else:
                     nome_atual = ""
                     valor_atual = ""
                     achou_cpf = False
-                    
-                    # Identifica o nome do departamento no cabeçalho para ignorar mais tarde
-                    depto_remover = ""
-                    match_depto = re.search(r'departamento\s*[:\-]?\s*([^\n]+)', texto_pag1)
-                    if match_depto:
-                        depto_raw = match_depto.group(1).upper()
-                        depto_remover = re.sub(r'\[.*?\].*', '', depto_raw).strip()
 
                     for page in pdf.pages:
                         texto = page.extract_text()
@@ -176,7 +241,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                             linha = linha.strip()
                             if not linha: continue
 
-                            if "total do pedido" in linha.lower() or "total geral" in linha.lower() or "total:" in linha.lower():
+                            if "total do pedido" in linha.lower() or "total geral" in linha.lower() or "total:" in linha.lower() or re.match(r'total:\s*r\$\s*[\d.,]+', linha.lower()):
                                 if achou_cpf and nome_atual and valor_atual:
                                     dados_pdf_atual.append({
                                         'ITENS DO DIÁRIO / PRODUTO': re.sub(r'\s+', ' ', nome_atual).strip(), 
@@ -187,23 +252,17 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     valor_atual = ""
                                 continue
                                 
-                            # Filtro de sugeiras específicas desse layout
                             linha_limpa_nome = linha
-                            termos_lixo = [
-                                r'\[.*?\]', r'\(.*?\)', 
-                                r'(?i)jaé\s*-\s*cartão\s*municipal\s*rio\s*de\s*janeiro',
-                                r'(?i)cartão\s*municipal\s*rio\s*de\s*janeiro',
-                                r'(?i)jaé', r'(?i)rio\s*de\s*janeiro', r'(?i)de\s*janeiro'
-                            ]
-                            if depto_remover:
-                                termos_lixo.append(rf'(?i)\b{re.escape(depto_remover)}\b')
+                            termos_lixo_atual = lixos_sistema.copy()
+                            
+                            for depto in deptos_remover:
+                                termos_lixo_atual.append(rf'(?i){re.escape(depto)}')
                                 
-                            for termo in termos_lixo:
+                            for termo in termos_lixo_atual:
                                 linha_limpa_nome = re.sub(termo, ' ', linha_limpa_nome)
 
-                            match_cpf = re.search(r'(\d{11})', linha)
+                            match_cpf = re.search(r'(?<!\d)(\d{11})(?!\d)', linha)
                             
-                            # Inicia a captura de um novo funcionário
                             if match_cpf:
                                 if achou_cpf and nome_atual and valor_atual:
                                     dados_pdf_atual.append({
@@ -213,21 +272,20 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                 
                                 cpf = match_cpf.group(1)
                                 
-                                # Extrai o nome após o CPF já limpo de "departamento" e "Jaé"
-                                parte_apos_cpf = linha_limpa_nome[linha_limpa_nome.find(cpf) + 11:]
+                                idx_cpf = linha_limpa_nome.find(cpf)
+                                if idx_cpf != -1:
+                                    parte_apos_cpf = linha_limpa_nome[idx_cpf + 11:]
+                                else:
+                                    parte_apos_cpf = linha_limpa_nome
+                                    
                                 pedacos_nome = []
-                                
                                 for palavra in parte_apos_cpf.split():
                                     palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
-                                    # Usa correspondência exata para conectivos, ignorando "de" em minúsculo
-                                    if palavra_limpa.isupper() or palavra_limpa in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
+                                    if palavra_limpa.isupper():
                                         pedacos_nome.append(palavra_limpa)
-                                    elif palavra_limpa:
-                                        break
                                         
                                 nome_atual = " ".join(pedacos_nome)
                                 
-                                # Pega o maior valor financeiro daquela linha (Ex: 200,00)
                                 valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
                                 if valores:
                                     valores_floats = [converter_para_float(v) for v in valores]
@@ -238,9 +296,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     
                                 achou_cpf = True
                                 
-                            # Continua capturando o funcionário nas linhas de baixo
                             elif achou_cpf:
-                                # Verifica se os valores caíram para a linha de baixo e atualiza
                                 valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
                                 if valores:
                                     valores_floats = [converter_para_float(v) for v in valores]
@@ -252,10 +308,8 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                 pedacos_nome = []
                                 for palavra in linha_limpa_nome.split():
                                     palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
-                                    if palavra_limpa.isupper() or palavra_limpa in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
+                                    if palavra_limpa.isupper():
                                         pedacos_nome.append(palavra_limpa)
-                                    elif palavra_limpa:
-                                        break
                                 
                                 if pedacos_nome:
                                     nome_atual += " " + " ".join(pedacos_nome)
@@ -312,14 +366,12 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                                     if nome and valor_str:
                                         dados_pdf_atual.append({'ITENS DO DIÁRIO / PRODUTO': nome, 'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_str})
 
-        # Adiciona a Tarifa
         if valor_tarifa and valor_tarifa not in ['0,00', '0.00']:
             dados_pdf_atual.append({
                 'ITENS DO DIÁRIO / PRODUTO': 'TARIFA DE ENTREGA',
                 'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_tarifa
             })
 
-        # Finaliza e formata
         if dados_pdf_atual:
             for i, linha in enumerate(dados_pdf_atual):
                 linha['ITENS DO DIÁRIO / QUANTIDADE'] = 1
