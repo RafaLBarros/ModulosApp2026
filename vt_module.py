@@ -54,7 +54,7 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
             
             if "relatório resumido do pedido" in texto_pag1:
                 tipo_layout = "pluxee"
-                fornecedor = "PLUXEE"
+                fornecedor = "Sodexo"
             elif "pedido loja" in texto_pag1 or "jae" in texto_pag1 or "cbd bilhete" in texto_pag1:
                 tipo_layout = "jae"
                 fornecedor = "CBD BILHETE DIGITAL S/A"
