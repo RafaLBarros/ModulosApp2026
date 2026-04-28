@@ -82,11 +82,10 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                         linha = linha.strip()
                         if not linha: continue
                         
-                        # Acha os 11 números colados no nome, e salva tudo até bater numa palavra do sistema como CIAP ou Riocard
                         match_cpf = re.search(r'(\d{11})([A-ZÀ-Ÿ\s]+?)(?=\s+(?:CIAP|Riocard|Semove|Card|Bilhete|Único|Tarifa|Variável|Verificar|\[|$))', linha)
                         
                         if match_cpf:
-                            # Salva o funcionário anterior se houver
+                            # Salva o funcionário anterior se o total não foi encontrado (fallback)
                             if achou_cpf and nome_atual and valor_atual:
                                 dados_pdf_atual.append({
                                     'ITENS DO DIÁRIO / PRODUTO': nome_atual.strip(), 
@@ -96,11 +95,11 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                             cpf = match_cpf.group(1)
                             nome_atual = match_cpf.group(2).strip()
                             
-                            # Extrai os valores financeiros que estão nessa mesma primeira linha
+                            # Extrai os valores iniciais (ex: 224,00) como segurança
                             valores = re.findall(r'\b\d+[.,]\d{2}\b', linha)
                             if valores:
                                 valores_floats = [converter_para_float(v) for v in valores]
-                                valor_vt = max(valores_floats) # Seleciona 224,00 e ignora os 0,01 e 6,72
+                                valor_vt = max(valores_floats) 
                                 valor_atual = f"{valor_vt:.2f}".replace('.', ',')
                             else:
                                 valor_atual = "0,00"
@@ -108,25 +107,37 @@ def extrair_vt_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
                             achou_cpf = True
                             
                         elif achou_cpf:
-                            # Pula totais de linha (ex: 230,72)
+                            # ========================================================
+                            # TRAVA DE SEGURANÇA: ENCONTROU O TOTAL DO FUNCIONÁRIO
+                            # ========================================================
                             if re.match(r'^\d+[.,]\d{2}$', linha):
+                                valor_atual = linha.strip()
+                                
+                                # Salva imediatamente o funcionário finalizado
+                                dados_pdf_atual.append({
+                                    'ITENS DO DIÁRIO / PRODUTO': nome_atual.strip(), 
+                                    'ITENS DO DIÁRIO / PREÇO UNITÁRIO': valor_atual
+                                })
+                                
+                                # Fecha o bloco! Isso impede que o "Total Geral" sobrescreva a Yasmin
+                                achou_cpf = False 
+                                nome_atual = ""
+                                valor_atual = ""
                                 continue
                             
-                            # Reúne as outras partes do nome que caíram para a linha de baixo
+                            # Continua reunindo as partes do nome cortado
                             pedacos_nome = []
                             for palavra in linha.split():
                                 palavra_limpa = re.sub(r'[^a-zA-ZÀ-ÿ]', '', palavra)
-                                # Adiciona apenas palavras que estão em Caixa Alta (Padrão de Nome) ou conectivos
                                 if palavra_limpa.isupper() or palavra_limpa.upper() in ['E', 'DE', 'DA', 'DO', 'DAS', 'DOS']:
                                     pedacos_nome.append(palavra_limpa)
                                 else:
-                                    # Se encontrou palavra em minúsculo (Semove, Card...), acabaram as partes do nome
                                     break
                             
                             if pedacos_nome:
                                 nome_atual += " " + " ".join(pedacos_nome)
 
-                # Salva o último funcionário da última página processada
+                # Salva o último funcionário caso o PDF acabe abruptamente sem a linha de total
                 if achou_cpf and nome_atual and valor_atual:
                     dados_pdf_atual.append({
                         'ITENS DO DIÁRIO / PRODUTO': nome_atual.strip(), 
