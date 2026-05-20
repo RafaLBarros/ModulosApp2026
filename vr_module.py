@@ -38,7 +38,7 @@ def extrair_vr_completo(lista_caminhos_pdf, caminho_saida_excel=None, conta_cont
             if "sodexo" in texto_pag1 or "pluxee" in texto_pag1:
                 tipo_layout = "sodexo"
                 fornecedor = "PLUXEE"
-            elif "caixa" in texto_pag1:
+            elif "caixa" in texto_pag1 or ("auxílio alimentação" in texto_pag1 and "relatório de detalhes do pedido" in texto_pag1):
                 tipo_layout = "caixa"
                 fornecedor = "Caixa Econômica Federal"
             else:
